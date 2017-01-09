@@ -2555,6 +2555,11 @@ ProgramConfiguration.prototype.populatePaintArray = function populatePaintArray 
             }
         }
     }
+
+    ///start rick patch
+    // save the start and stop potision of the feature in this layer's paintArray
+    featureProperties[layer.id] = [start, length];
+    ///end rick patch
 };
 
 ProgramConfiguration.prototype.setUniforms = function setUniforms (gl, program, layer, globalProperties) {
@@ -7315,6 +7320,11 @@ Tile.prototype.loadVectorData = function loadVectorData (data, painter) {
     this.symbolQuadsArray = new SymbolQuadsArray(data.symbolQuadsArray);
     this.featureIndex = new FeatureIndex(data.featureIndex, this.rawTileData, this.collisionTile);
     this.buckets = Bucket.deserialize(data.buckets, painter.style);
+
+    ///start rick patch
+    // deserialize the custom data in main thread
+    this.featureTags = data.featureTags;
+    ///end rick patch
 };
 
 /**
@@ -8316,6 +8326,10 @@ WorkerTile.prototype.parse = function parse (data, layerIndex, actor, callback) 
 
         var transferables = [];
         callback(null, {
+            ///start rick patch
+            // serialize custom data from the worker and post to main thread
+            featureTags: serializeFeatureTags(this$1),
+            ///end rick patch
             buckets: serializeBuckets(util.values(buckets), transferables),
             featureIndex: featureIndex.serialize(transferables),
             collisionTile: collisionTile.serialize(transferables),
@@ -8424,6 +8438,21 @@ function serializeBuckets(buckets, transferables) {
         .filter(function (b) { return !b.isEmpty(); })
         .map(function (b) { return b.serialize(transferables); });
 }
+
+///start rick patch
+function serializeFeatureTags(tile){
+    if (tile && tile.vectorTile && tile.vectorTile.features) {
+        var features = tile.vectorTile.features;
+        var result = [];
+        var len = features.length;
+        for (var i = 0; i < len; ++i) {
+            result.push(features[i].tags);
+        }
+        return result;
+    }
+    return null;
+}
+///end rick patch
 
 module.exports = WorkerTile;
 
@@ -9449,6 +9478,63 @@ var Style = (function (Evented) {
             value.property !== '$zoom' &&
             value.property !== undefined
         );
+
+        ///start rick patch
+        // this a temp workaround for one hard coded single usecase
+        // need to improve this part and make it work as a more generic feature
+        if (layerId === 'fill-1' && name === 'fill-color') {
+            function rgba2Array(str){
+                if (str.substr(0,1) == '#') {
+                    var c = parseInt('0x' + str.substr(1));
+                    return [c>>16, (c>>8) &255, c&255, 255];
+                }
+                // TODO, rgba() and rgb() ?
+                return null;
+            }
+            // build cache;
+            var colorMap = {};
+            var defaultColor = [0,0,0,0];
+            var stops = value.stops;
+            for (var i = 0; i < stops.length; ++i) {
+                var rgba = rgba2Array(stops[i][1]);
+                if (rgba) {
+                    colorMap[stops[i][0]] = rgba;
+                }
+            }
+            defaultColor = rgba2Array(stops[0][1]);
+            if (defaultColor == null) {
+                defaultColor = [0,0,0,0];
+            }
+
+            // process tiles
+            for (var key in this.sourceCaches[1]._tiles) {
+                var tile = this.sourceCaches[1]._tiles[key];
+                if (tile.buckets['fill-1']) {
+                    var buffer = tile.buckets['fill-1'].buffers.layerData['fill-1'].paintVertexBuffer;
+
+                    var flen = tile.featureTags.length;
+                    var byteLen = tile.featureTags[flen-1]['fill-1'][1] * 4;
+                    var uint8Array = new Uint8Array(byteLen);
+
+                    for (var f = 0; f < flen; ++f) {
+                        var tags = tile.featureTags[f];
+                        var rgba = colorMap[tags['hexGridID']];
+                        if (!rgba) rgba = defaultColor;
+                        var end = tags['fill-1'][1];
+                        for (var cpos = tags['fill-1'][0]; cpos < end; ++ cpos) {
+                            for (var i = 0; i < 4; ++i) {
+                                uint8Array[cpos*4+i] = rgba[i];
+                            }
+                        }
+                    }
+                    var gl = this.map.painter.gl;
+                    var type = gl[buffer.type];
+                    gl.bindBuffer(type, buffer.buffer);
+                    gl.bufferData(type, uint8Array, gl.STATIC_DRAW);
+                }
+            }
+        } else // else to skip next if
+        ///end rick patch
 
         if (!isFeatureConstant || !wasFeatureConstant) {
             this._updateLayer(layer);
