@@ -7324,6 +7324,13 @@ Tile.prototype.loadVectorData = function loadVectorData (data, painter) {
 ///start rick patch
     // deserialize the custom data in main thread
     this.featureTags = data.featureTags;
+
+    // in case the style is updated during worker job
+    if (this.postProcess) {
+        var postProcess = this.postProcess;
+        this.postProcess = null;
+        postProcess(this);
+    }
 ///end rick patch
 };
 
@@ -9504,6 +9511,42 @@ var Style = (function (Evented) {
                 }
                 return null;
             }
+
+            var gl = this.map.painter.gl;
+            function processTile(tile) {
+                if (!tile.buckets['fill-1']) return;
+
+                var buffer = tile.buckets['fill-1'].buffers.layerData['fill-1'].paintVertexBuffer;
+                var flen = tile.featureTags.length;
+                var byteLen = tile.featureTags[flen-1]['fill-1'][1] * 4;
+                var uint8Array;
+                if (buffer.arrayBuffer) {
+                    // when it's still in arrayBuffer
+                    uint8Array = new Uint8Array(buffer.arrayBuffer);
+                } else {
+                    // when arrayBuffer is destroyed
+                    uint8Array = new Uint8Array(byteLen);
+                }
+
+                for (var f = 0; f < flen; ++f) {
+                    var tags = tile.featureTags[f];
+                    var rgba = colorMap[tags['hexGridID']];
+                    if (!rgba) rgba = defaultColor;
+                    var end = tags['fill-1'][1];
+                    for (var cpos = tags['fill-1'][0]; cpos < end; ++ cpos) {
+                        for (var i = 0; i < 4; ++i) {
+                            uint8Array[cpos*4+i] = rgba[i];
+                        }
+                    }
+                }
+                if (buffer.buffer) {
+                    // when arrayBuffer is destroyed and buffer is created
+                    var type = gl[buffer.type];
+                    gl.bindBuffer(type, buffer.buffer);
+                    gl.bufferData(type, uint8Array, gl.STATIC_DRAW);
+                }
+            }
+
             // build cache;
             var colorMap = {};
             var defaultColor = [0,0,0,0];
@@ -9523,30 +9566,12 @@ var Style = (function (Evented) {
             for (var key in this.sourceCaches[1]._tiles) {
                 var tile = this.sourceCaches[1]._tiles[key];
                 if (tile.buckets['fill-1']) {
-                    var buffer = tile.buckets['fill-1'].buffers.layerData['fill-1'].paintVertexBuffer;
-
-                    var flen = tile.featureTags.length;
-                    var byteLen = tile.featureTags[flen-1]['fill-1'][1] * 4;
-                    var uint8Array = new Uint8Array(byteLen);
-
-                    for (var f = 0; f < flen; ++f) {
-                        var tags = tile.featureTags[f];
-                        var rgba = colorMap[tags['hexGridID']];
-                        if (!rgba) rgba = defaultColor;
-                        var end = tags['fill-1'][1];
-                        for (var cpos = tags['fill-1'][0]; cpos < end; ++ cpos) {
-                            for (var i = 0; i < 4; ++i) {
-                                uint8Array[cpos*4+i] = rgba[i];
-                            }
-                        }
-                    }
-                    var gl = this.map.painter.gl;
-                    var type = gl[buffer.type];
-                    gl.bindBuffer(type, buffer.buffer);
-                    gl.bufferData(type, uint8Array, gl.STATIC_DRAW);
+                    processTile(tile);
+                } else if (tile.state == "loading") {
+                    tile.postProcess = processTile;
                 }
             }
-        } else // else to skip next if
+        }
 ///end rick patch
 
         if (!isFeatureConstant || !wasFeatureConstant) {
