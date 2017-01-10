@@ -2556,10 +2556,10 @@ ProgramConfiguration.prototype.populatePaintArray = function populatePaintArray 
         }
     }
 
-    ///start rick patch
+///start rick patch
     // save the start and stop potision of the feature in this layer's paintArray
     featureProperties[layer.id] = [start, length];
-    ///end rick patch
+///end rick patch
 };
 
 ProgramConfiguration.prototype.setUniforms = function setUniforms (gl, program, layer, globalProperties) {
@@ -7321,10 +7321,10 @@ Tile.prototype.loadVectorData = function loadVectorData (data, painter) {
     this.featureIndex = new FeatureIndex(data.featureIndex, this.rawTileData, this.collisionTile);
     this.buckets = Bucket.deserialize(data.buckets, painter.style);
 
-    ///start rick patch
+///start rick patch
     // deserialize the custom data in main thread
     this.featureTags = data.featureTags;
-    ///end rick patch
+///end rick patch
 };
 
 /**
@@ -8326,10 +8326,10 @@ WorkerTile.prototype.parse = function parse (data, layerIndex, actor, callback) 
 
         var transferables = [];
         callback(null, {
-            ///start rick patch
+///start rick patch
             // serialize custom data from the worker and post to main thread
             featureTags: serializeFeatureTags(this$1),
-            ///end rick patch
+///end rick patch
             buckets: serializeBuckets(util.values(buckets), transferables),
             featureIndex: featureIndex.serialize(transferables),
             collisionTile: collisionTile.serialize(transferables),
@@ -9453,7 +9453,11 @@ var Style = (function (Evented) {
         return this.getLayer(layer).getLayoutProperty(name);
     };
 
-    Style.prototype.setPaintProperty = function setPaintProperty (layerId, name, value, klass) {
+///removed by rick patch
+    //Style.prototype.setPaintProperty = function setPaintProperty (layerId, name, value, klass) {
+///start rick patch
+    Style.prototype.setPaintProperty = function setPaintProperty (layerId, name, value, klass, fast) {
+///end rick patch
         this._checkLoaded();
 
         var layer = this.getLayer(layerId);
@@ -9479,16 +9483,25 @@ var Style = (function (Evented) {
             value.property !== undefined
         );
 
-        ///start rick patch
+///start rick patch
         // this a temp workaround for one hard coded single usecase
         // need to improve this part and make it work as a more generic feature
-        if (layerId === 'fill-1' && name === 'fill-color') {
+        if (fast && name === 'fill-color') {
             function rgba2Array(str){
                 if (str.substr(0,1) == '#') {
                     var c = parseInt('0x' + str.substr(1));
                     return [c>>16, (c>>8) &255, c&255, 255];
                 }
-                // TODO, rgba() and rgb() ?
+                if (str.substr(0,3) == 'rgb') {
+                    var pos0 = str.indexOf('(');
+                    var pos1 = str.indexOf(')');
+                    var colors = str.substring(pos0+1, pos1).split(',');
+                    if (colors.length == 3) { // rgb()
+                        return [parseInt(colors[0]), parseInt(colors[1]), parseInt(colors[2]), 255];
+                    } else if (colors.length == 4) { //rgba()
+                        return [parseInt(colors[0]), parseInt(colors[1]), parseInt(colors[2]), (parseFloat(colors[3])*255)&255];
+                    }
+                }
                 return null;
             }
             // build cache;
@@ -9534,7 +9547,7 @@ var Style = (function (Evented) {
                 }
             }
         } else // else to skip next if
-        ///end rick patch
+///end rick patch
 
         if (!isFeatureConstant || !wasFeatureConstant) {
             this._updateLayer(layer);
@@ -16616,8 +16629,13 @@ var Map = (function (Camera) {
      * @see [Adjust a layer's opacity](https://www.mapbox.com/mapbox-gl-js/example/adjust-layer-opacity/)
      * @see [Create a draggable point](https://www.mapbox.com/mapbox-gl-js/example/drag-a-point/)
      */
-    Map.prototype.setPaintProperty = function setPaintProperty (layer, name, value, klass) {
-        this.style.setPaintProperty(layer, name, value, klass);
+///removed by rick patch
+    //Map.prototype.setPaintProperty = function setPaintProperty (layer, name, value, klass) {
+    //    this.style.setPaintProperty(layer, name, value, klass);
+///start rick patch
+    Map.prototype.setPaintProperty = function setPaintProperty (layer, name, value, klass, fast) {
+        this.style.setPaintProperty(layer, name, value, klass, fast);
+///end rick patch
         this._update(true);
         return this;
     };
